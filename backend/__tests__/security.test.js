@@ -33,6 +33,18 @@ describe("maskIdNumber", () => {
     expect(maskIdNumber("M1234567", "Passport")).toBe("****4567");
   });
 
+  test("still masks a 12-digit number as Aadhaar-style with no idType given", () => {
+    // Suspect.suspectData carries a bare ID number with no type alongside
+    // it - this is the fix for the format inconsistency the test report
+    // flagged between guest-list masking (has idType) and suspect masking
+    // (doesn't).
+    expect(maskIdNumber("123456789012")).toBe("XXXX-XXXX-9012");
+  });
+
+  test("does not misclassify a non-Aadhaar ID that happens to be a different length", () => {
+    expect(maskIdNumber("1234567890123", "Other")).toBe("*********0123"); // 13 digits, not Aadhaar-shaped
+  });
+
   test("masks something at or under 4 chars entirely", () => {
     expect(maskIdNumber("123", "Other")).toBe("***");
   });
@@ -383,6 +395,31 @@ describe("Police login OTP flow", () => {
     expect(healthRes.status).toBe(200);
   });
 
+  test("a failing activity-timestamp update does not deny an otherwise-valid token", async () => {
+    // db.lastActivityAt is old enough that authenticatePolice's throttled
+    // update branch runs updateActivity() - and here it rejects, simulating
+    // a transient DB write failure. That must not turn a valid, correctly
+    // authenticated request into a 401 - it should just skip the
+    // bookkeeping write and continue, the same way the equivalent hotel
+    // middleware already does for its own activity update.
+    db.lastActivityAt = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+    db.updateActivity = jest.fn().mockRejectedValue(new Error("simulated DB write failure"));
+
+    const loginRes = await request(app)
+      .post("/api/police/login")
+      .send({ email: "officer@police.gov.in", password: "correct-password" });
+    const otpRes = await request(app)
+      .post("/api/police/login/verify-otp")
+      .send({ otpToken: loginRes.body.otpToken, otp: loginRes.body.devOtp });
+
+    const healthRes = await request(app)
+      .get("/api/police/health")
+      .set("Authorization", `Bearer ${otpRes.body.token}`);
+
+    expect(healthRes.status).toBe(200);
+    expect(db.updateActivity).toHaveBeenCalled();
+  });
+
   test("wrong OTP is rejected and counts against the attempt limit", async () => {
     const loginRes = await request(app)
       .post("/api/police/login")
@@ -414,6 +451,39 @@ describe("Police login OTP flow", () => {
 
     expect(lastRes.status).toBe(429);
     expect(lastRes.body.code).toBe("OTP_LOCKED");
+  });
+
+  test("exhausting the /login rate limit does not also block /login/verify-otp", async () => {
+    // authRateLimit (10/15min) and otpVerifyRateLimit (30/15min) are
+    // separate instances with their own counters - a retry-heavy login
+    // step must not eat into the OTP step's budget or vice versa.
+    let lastLoginRes;
+    for (let i = 0; i < 11; i++) {
+      lastLoginRes = await request(app)
+        .post("/api/police/login")
+        .send({ email: "officer@police.gov.in", password: "wrong-password" });
+    }
+    expect(lastLoginRes.status).toBe(429); // /login's own budget is now spent
+
+    // A real login attempt right after must still be able to reach the
+    // OTP step and verify it - proving /login/verify-otp has its own,
+    // unaffected budget.
+    const goodLogin = await request(app)
+      .post("/api/police/login")
+      .send({ email: "officer@police.gov.in", password: "correct-password" });
+    expect(goodLogin.status).toBe(429); // /login itself is still limited...
+
+    // ...but directly hitting verify-otp (simulating an officer who is
+    // mid-flow from before the limit kicked in) is not, since a fresh OTP
+    // was already issued to `db` by the successful login inside the very
+    // first test in this suite's shared `db` fixture setup is not reused
+    // here - so issue one now via a lower-level check instead.
+    db.otp = { hash: await bcrypt.hash("111111", 10), expiresAt: new Date(Date.now() + 60000), attempts: 0 };
+    const otpToken = jwt.sign({ policeId: db._id, purpose: "police_login_otp" }, process.env.JWT_SECRET, { expiresIn: "10m" });
+    const otpRes = await request(app)
+      .post("/api/police/login/verify-otp")
+      .send({ otpToken, otp: "111111" });
+    expect(otpRes.status).toBe(200);
   });
 
   test("the otp-pending token cannot be used against a protected police route", async () => {
@@ -517,12 +587,11 @@ describe("Hotel-facing suspect responses (masking)", () => {
 
     expect(res.status).toBe(200);
     const suspect = res.body.suspects[0];
-    // Generic masked format, not the prettier "XXXX-XXXX-1234" Aadhaar
-    // style: Suspect.suspectData has no idType field, so
-    // sanitizeSuspectForHotel can't tell maskIdNumber this is an Aadhaar -
-    // see the test report for why the two masking call sites disagree on
-    // format (both are equally safe; only the cosmetic format differs).
-    expect(suspect.suspectData.aadhar).toBe("********9012");
+    // Suspect.suspectData has no idType field, so maskIdNumber falls back
+    // to recognizing a bare 12-digit number as Aadhaar-style on shape
+    // alone (see utils/mask.js) - this keeps the format consistent with
+    // the guest-list masking even without an explicit type.
+    expect(suspect.suspectData.aadhar).toBe("XXXX-XXXX-9012");
     expect(suspect.suspectData.aadhar).not.toContain("123456789012");
     expect(suspect.suspectData.photos).toEqual({
       guestPhoto: true,
@@ -541,7 +610,7 @@ describe("Hotel-facing suspect responses (masking)", () => {
       .set("Authorization", `Bearer ${hotelToken}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.suspect.suspectData.aadhar).toBe("********9012"); // see note above
+    expect(res.body.suspect.suspectData.aadhar).toBe("XXXX-XXXX-9012");
     expect(res.body.suspect.suspectData.photos).toEqual({
       guestPhoto: true,
       idFront: true,

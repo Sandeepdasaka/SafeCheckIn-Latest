@@ -221,11 +221,15 @@ prototype:
 - `JWT_SECRET` has no insecure fallback anywhere — the backend refuses to
   boot without a strong one.
 - Login rate limiting is enforced at a realistic threshold rather than
-  effectively disabled.
+  effectively disabled, with the police login and OTP-verification steps
+  on **separate** rate limiters so one doesn't drain the other's budget.
 
 This is still a project under active hardening, not a production-audited
 system — treat data retention policy and encryption-at-rest for Aadhaar/ID
-data as open items before using it with real guest data.
+data as open items before using it with real guest data. See
+[`TestReports/`](./TestReports/README.md) for the test methodology, the
+bugs an end-to-end pass found (and fixed) in this security work, and the
+evidence for both.
 
 ## Project structure
 

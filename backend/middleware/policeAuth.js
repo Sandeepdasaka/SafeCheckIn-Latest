@@ -63,7 +63,18 @@ const authenticatePolice = async (req, res, next) => {
       const FIVE_MINUTES = 5 * 60 * 1000;
 
       if (timeDiff > FIVE_MINUTES) {
-        await police.updateActivity();
+        // This is a best-effort bookkeeping write, not part of what makes
+        // the token valid - it must never be able to turn a legitimately
+        // authenticated request into a rejection. Previously this call sat
+        // inside the same try/catch as jwt.verify() below, so a failed
+        // write (a transient DB hiccup, a validation error) was reported
+        // back to the officer as "invalid token". Mirrors the equivalent
+        // guard in middleware/auth.js's hotel auth.
+        try {
+          await police.updateActivity();
+        } catch (activityError) {
+          console.warn("Failed to update police activity:", activityError.message);
+        }
       }
 
       req.user = {

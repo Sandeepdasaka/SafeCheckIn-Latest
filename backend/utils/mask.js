@@ -10,7 +10,12 @@ const maskIdNumber = (idNumber, idType) => {
 
   const last4 = str.slice(-4);
 
-  if (idType === "Aadhar Card" && /^\d{12}$/.test(str)) {
+  // idType isn't always available to the caller (e.g. Suspect.suspectData
+  // stores a bare ID number with no type alongside it) - a 12-digit
+  // all-numeric ID is, in practice, always an Aadhaar number in this app,
+  // so treat that shape as Aadhaar-style even without the type. Both
+  // branches are equally safe; this only affects display format.
+  if ((idType === "Aadhar Card" || !idType) && /^\d{12}$/.test(str)) {
     return `XXXX-XXXX-${last4}`;
   }
 

@@ -1,0 +1,13 @@
+{
+  "stillOnLoginAfterWrongPassword": true,
+  "devOtpBannerVisible": true,
+  "finalUrl": "http://127.0.0.1:8081/dashboard",
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Dashboard data fetch error: TypeError: Failed to fetch\n    at apiCall (http://127.0.0.1:8081/src/components/Dashboard/DashboardHome.tsx:73:32)\n    at fetchRegularData (http://127.0.0.1:8081/src/components/Dashboard/DashboardHome.tsx:115:17)\n    at fetchDashboardData (http://127.0.0.1:8081/src/components/Dashboard/DashboardHome.tsx:152:23)\n    at http://127.0.0.1:8081/src/components/Dashboard/DashboardHome.tsx:163:9\n    at commitHookEffectListMount (http://127.0.0.1:8081/node_modules/.vite/deps/chunk-T2SWDQEL.js?v=bb9d7001:16915:34)\n    at commitPassiveMountOnFiber (http://127.0.0.1:8081/node_modules/.vite/deps/chunk-T2SWDQEL.js?v=bb9d7001:18156:19)\n    at commitPassiveMountEffects_complete (http://127.0.0.1:8081/node_modules/.vite/deps/chunk-T2SWDQEL.js?v=bb9d7001:18129:17)\n    at commitPassiveMountEffects_begin (http://127.0.0.1:8081/node_modules/.vite/deps/chunk-T2SWDQEL.js?v=bb9d7001:18119:15)\n    at commitPassiveMountEffects (http://127.0.0.1:8081/node_modules/.vite/deps/chunk-T2SWDQEL.js?v=bb9d7001:18109:11)\n    at flushPassiveEffectsImpl (http://127.0.0.1:8081/node_modules/.vite/deps/chunk-T2SWDQEL.js?v=bb9d7001:19490:11)",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED"
+  ]
+}

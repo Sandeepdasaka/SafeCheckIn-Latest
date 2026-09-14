@@ -1,0 +1,125 @@
+
+> police-portal-backend@1.0.0 test
+> jest --coverage
+
+(node:969) [MONGOOSE] Warning: Duplicate schema index on {"email":1} found. This is often due to declaring an index using both "index: true" and "schema.index()". Please remove the duplicate index definition.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  console.log
+    
+    🔐 [DEMO OTP] Login OTP for officer@police.gov.in (Test Officer, badge #B100): 402234
+       Valid for 5 minutes. In production this would be sent by SMS/email, not logged.
+
+      at log (utils/otp.js:27:11)
+
+  console.log
+    
+    🔐 [DEMO OTP] Login OTP for officer@police.gov.in (Test Officer, badge #B100): 296617
+       Valid for 5 minutes. In production this would be sent by SMS/email, not logged.
+
+      at log (utils/otp.js:27:11)
+
+  console.log
+    
+    🔐 [DEMO OTP] Login OTP for officer@police.gov.in (Test Officer, badge #B100): 509450
+       Valid for 5 minutes. In production this would be sent by SMS/email, not logged.
+
+      at log (utils/otp.js:27:11)
+
+  console.warn
+    Failed to update police activity: simulated DB write failure
+
+      74 |           await police.updateActivity();
+      75 |         } catch (activityError) {
+    > 76 |           console.warn("Failed to update police activity:", activityError.message);
+         |                   ^
+      77 |         }
+      78 |       }
+      79 |
+
+      at warn (middleware/policeAuth.js:76:19)
+
+  console.log
+    
+    🔐 [DEMO OTP] Login OTP for officer@police.gov.in (Test Officer, badge #B100): 705761
+       Valid for 5 minutes. In production this would be sent by SMS/email, not logged.
+
+      at log (utils/otp.js:27:11)
+
+  console.log
+    
+    🔐 [DEMO OTP] Login OTP for officer@police.gov.in (Test Officer, badge #B100): 296487
+       Valid for 5 minutes. In production this would be sent by SMS/email, not logged.
+
+      at log (utils/otp.js:27:11)
+
+  console.log
+    
+    🔐 [DEMO OTP] Login OTP for officer@police.gov.in (Test Officer, badge #B100): 228001
+       Valid for 5 minutes. In production this would be sent by SMS/email, not logged.
+
+      at log (utils/otp.js:27:11)
+
+PASS __tests__/security.test.js (6.441 s)
+  maskIdNumber
+    ✓ masks a 12-digit Aadhaar as XXXX-XXXX-<last4> (2 ms)
+    ✓ masks a generic ID (e.g. passport) to stars + last4
+    ✓ still masks a 12-digit number as Aadhaar-style with no idType given (1 ms)
+    ✓ does not misclassify a non-Aadhaar ID that happens to be a different length
+    ✓ masks something at or under 4 chars entirely (1 ms)
+    ✓ passes through falsy values unchanged (7 ms)
+  OTP helpers
+    ✓ generateOtp produces a 6-digit numeric string (1 ms)
+    ✓ hashOtp/verifyOtpHash round-trip correctly (258 ms)
+  Hotel-facing guest responses (masking)
+    ✓ GET /api/guests/:id masks idNumber and strips photo bytes (29 ms)
+    ✓ GET /api/guests/:id with no token is rejected (7 ms)
+    ✓ GET /api/guests/:id for a guest at a different hotel returns 404, not another hotel's data (5 ms)
+  Police-only photo endpoint
+    ✓ a valid police token can fetch the photo bytes (5 ms)
+    ✓ a hotel token is rejected (police role required) (6 ms)
+    ✓ no token is rejected (3 ms)
+    ✓ an unknown photo type is rejected with 400, not a crash (3 ms)
+  Police login OTP flow
+    ✓ correct password does NOT issue a usable session token directly (599 ms)
+    ✓ wrong password never reaches the OTP stage (384 ms)
+    ✓ full flow: login -> correct OTP -> real token that passes authenticatePolice (469 ms)
+    ✓ a failing activity-timestamp update does not deny an otherwise-valid token (425 ms)
+    ✓ wrong OTP is rejected and counts against the attempt limit (431 ms)
+    ✓ 5 wrong OTP attempts locks out the pending login (798 ms)
+    ✓ exhausting the /login rate limit does not also block /login/verify-otp (1272 ms)
+    ✓ the otp-pending token cannot be used against a protected police route (357 ms)
+  Hotel-facing suspect responses (masking)
+    ✓ GET /api/hotel/suspects masks the Aadhaar and reduces photos to booleans (3 ms)
+    ✓ GET /api/hotel/suspects/:id masks the Aadhaar and reduces photos to booleans (3 ms)
+
+--------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------------
+File                            | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s                                                                                                                         
+--------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------------
+All files                       |   30.55 |    13.93 |   18.26 |   31.01 |                                                                                                                                           
+ controllers                    |   22.59 |    14.15 |   19.04 |   23.09 |                                                                                                                                           
+  guestController.js            |   15.43 |     6.85 |   15.78 |   15.66 | 13-203,260-283,289-306,312-385,395-474,498-500,522,530-531,541-597,607-656,666-686,696-732,746-834,847-925                                
+  jurisdictionController.js     |   13.79 |        0 |       0 |   13.79 | 14-94                                                                                                                                     
+  policeAuthController.js       |   27.51 |    20.68 |      25 |   28.25 | 46-142,157,171-180,247-248,263,273,281,290,298,306-309,388-389,399-498,508-616,626-715,725-803,812-882,891-908,917-970,979-1007,1016-1034 
+  policeGuestPhotoController.js |   79.16 |     62.5 |      50 |   79.16 | 26,34,55,71-72                                                                                                                            
+ middleware                     |   23.93 |     10.6 |   10.52 |   24.56 |                                                                                                                                           
+  auth.js                       |   14.77 |      5.4 |    4.76 |   15.07 | 23,31,45-53,69-87,97-182,191-267,282-390,396-425,435-447,451-476,484-510,518-537                                                          
+  policeAuth.js                 |   51.47 |    30.61 |      20 |   51.47 | 23,44,52,88-114,125-132,136-143,148,159-200,206-217                                                                                       
+  security.js                   |    27.5 |        0 |      25 |   31.42 | 7-11,19-49                                                                                                                                
+  upload.js                     |      20 |        0 |       0 |      20 | 13-27,50-100                                                                                                                              
+ models                         |   45.55 |        0 |       0 |   47.12 |                                                                                                                                           
+  ActivityLog.js                |   44.92 |        0 |       0 |   46.26 | 259,273-276,287,297,316,330,344,359,374-377,397-400,422-425,465,470-472,479-495,500-510                                                   
+  User.js                       |   47.61 |        0 |       0 |      50 | 70-77,83,88-89,94                                                                                                                         
+ routes                         |   58.45 |    19.51 |      40 |   58.86 |                                                                                                                                           
+  guestRoutes.js                |      36 |        0 |       0 |   36.48 | 33-78,95-122,199-209,312-329,347-366                                                                                                      
+  hotelSuspectRoutes.js         |   70.27 |    61.53 |      75 |   70.27 | 46,77-78,107,119-120,131-140                                                                                                              
+  policeGuestPhotoRoutes.js     |     100 |      100 |     100 |     100 |                                                                                                                                           
+  policeRoutes.js               |     100 |      100 |     100 |     100 |                                                                                                                                           
+ utils                          |     100 |      100 |     100 |     100 |                                                                                                                                           
+  mask.js                       |     100 |      100 |     100 |     100 |                                                                                                                                           
+  otp.js                        |     100 |      100 |     100 |     100 |                                                                                                                                           
+--------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------------
+Test Suites: 1 passed, 1 total
+Tests:       25 passed, 25 total
+Snapshots:   0 total
+Time:        6.62 s, estimated 8 s
+Ran all test suites.

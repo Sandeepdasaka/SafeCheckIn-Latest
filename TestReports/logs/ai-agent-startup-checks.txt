@@ -1,0 +1,9 @@
+=== Import smoke test ===
+IMPORT OK - all modules load, routes registered: 9
+
+=== Required-field validation (missing NVIDIA_API_KEY) ===
+Correctly raised: ValidationError
+1 validation error for Settings
+nvidia_api_key
+  Field required [type=missing, input_value={'mongodb_uri': 'mongodb:...t-32-characters-long!!'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.9/v/missing

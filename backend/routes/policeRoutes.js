@@ -20,17 +20,18 @@ const {
   requireAdminPolice,
   requireAnyPolice,
 } = require("../middleware/policeAuth");
-const { authRateLimit } = require("../middleware/security");
+const { authRateLimit, otpVerifyRateLimit } = require("../middleware/security");
 // ⭐ NEW
 const {
   getJurisdictionMapData,
 } = require("../controllers/jurisdictionController");
 
-// Public routes (no authentication required). Rate-limited: /login guards
-// password guessing, /login/verify-otp guards brute-forcing the 6-digit OTP
-// on top of the per-officer attempt cap in verifyPoliceOtp itself.
+// Public routes (no authentication required). /login and /login/verify-otp
+// use SEPARATE rate limiters (own counters) - password guessing and OTP
+// guessing are different problems with different appropriate budgets, and
+// a retry on one step must not eat into the other step's allowance.
 router.post("/login", authRateLimit, loginPolice);
-router.post("/login/verify-otp", authRateLimit, verifyPoliceOtp);
+router.post("/login/verify-otp", otpVerifyRateLimit, verifyPoliceOtp);
 router.post("/register", registerPolice);
 
 // Protected routes (authentication required)

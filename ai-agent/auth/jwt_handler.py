@@ -56,9 +56,18 @@ async def hotel_auth(
 ) -> HotelUser:
     payload = _decode(creds.credentials)
 
-    # Reject police tokens — they have a 'role' field
+    # Reject police tokens. Node signs police tokens with role="police"
+    # (a generic type marker) AND a separate policeRole="admin_police" or
+    # "sub_police" - this used to check policeRole's values against the
+    # `role` field, which never matches (role is always literally
+    # "police"), so this check never fired. It happened to be harmless
+    # because a police payload also lacks hotelId/id, so the check below
+    # caught it anyway - but that's incidental, not this check doing its
+    # job, and would silently stop protecting if the payload shape ever
+    # changed. Check both fields Node actually sets.
     role = payload.get("role", "")
-    if role in ("admin_police", "sub_police"):
+    police_role = payload.get("policeRole", "")
+    if role == "police" or police_role in ("admin_police", "sub_police"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This endpoint requires a hotel token",

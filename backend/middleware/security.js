@@ -72,6 +72,20 @@ const authRateLimit = createRateLimit(
   10,
   "Too many login attempts. Please try again in 15 minutes.",
 );
+// Deliberately a SEPARATE instance (own counter) from authRateLimit, even
+// though both guard "auth". Police login is now two requests
+// (password, then OTP) - sharing one 10-request/15min budget with /login
+// meant a single retry on either step could burn through the other step's
+// allowance too, and since this is keyed by IP, an entire station behind
+// one NAT'd address would share that budget across every officer. The
+// per-officer 5-attempt OTP lockout (see verifyPoliceOtp) is the real
+// defense against guessing; this is just a broader backstop, so it can
+// afford a larger budget.
+const otpVerifyRateLimit = createRateLimit(
+  15 * 60 * 1000,
+  30,
+  "Too many OTP verification attempts. Please try again in 15 minutes.",
+);
 const apiRateLimit = createRateLimit(
   15 * 60 * 1000,
   300,
@@ -87,6 +101,7 @@ module.exports = {
   securityHeaders,
   sanitizeInput,
   authRateLimit,
+  otpVerifyRateLimit,
   apiRateLimit,
   uploadRateLimit,
 };
