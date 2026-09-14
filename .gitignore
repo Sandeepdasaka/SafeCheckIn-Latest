@@ -12,6 +12,7 @@ node_modules/
 !.env.example
 **/.env
 **/.env.*
+!**/.env.example
 
 # Python Virtual Environments (FastAPI)
 venv/
