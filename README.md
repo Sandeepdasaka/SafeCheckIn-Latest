@@ -193,9 +193,27 @@ both).
 This repo has had a security/privacy pass applied on top of the original
 prototype:
 
-- Guest photos and ID document scans are only ever servable through a
-  police-authenticated, audit-logged endpoint (`/api/police/guests/:id/photo/:type`)
-  — the hotel app and the AI chat can no longer see, fetch, or render them.
+- **Guest photos and ID documents are police-only.** They're only ever
+  servable through a police-authenticated, audit-logged endpoint
+  (`/api/police/guests/:id/photo/:type`) — the hotel app and the AI chat can
+  no longer see, fetch, or render them.
+- **ID/Aadhaar numbers are masked for the hotel app.** Every hotel-facing
+  guest and suspect endpoint returns ID numbers as `XXXX-XXXX-1234`-style
+  masked strings (see `backend/utils/mask.js`) — only police-facing
+  endpoints (`/api/suspects/*`) return the full number. Consent capture was
+  deliberately not built for this: the platform is intended for statutory
+  government/police use, not a consumer product requiring opt-in consent.
+- **Evidence has chain-of-custody integrity.** Every uploaded evidence file
+  is SHA-256 hashed at upload time; every download re-hashes the file and
+  compares it against that record, logging the result (`Integrity
+  Verified` / `INTEGRITY MISMATCH`) to the evidence's own audit trail.
+- **Police login requires OTP (2FA).** A correct password alone doesn't
+  issue a session — it issues a one-time passcode that must be verified
+  within 5 minutes (max 5 attempts) before a real token is granted. No
+  SMS/email provider is wired up yet, so in non-production the OTP is
+  logged server-side and echoed in the API response for demo purposes (see
+  `backend/utils/otp.js` — swap `deliverOtp` for a real provider before
+  using this beyond a demo).
 - There is no unauthenticated static file serving or debug endpoint exposing
   the `backend/uploads/` directory.
 - `backend/uploads/` (real guest ID photos in any live deployment) is
@@ -206,8 +224,8 @@ prototype:
   effectively disabled.
 
 This is still a project under active hardening, not a production-audited
-system — treat Aadhaar/ID handling, data retention, and consent capture as
-open items before using it with real guest data.
+system — treat data retention policy and encryption-at-rest for Aadhaar/ID
+data as open items before using it with real guest data.
 
 ## Project structure
 

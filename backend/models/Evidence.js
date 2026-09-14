@@ -62,6 +62,10 @@ const evidenceSchema = new mongoose.Schema(
         fileUrl: String, // Legacy disk path - kept for old records, no longer written
         fileSize: Number,
         mimeType: String,
+        // SHA-256 of the raw file bytes at upload time, for chain-of-custody
+        // integrity - re-verified on every download (see
+        // controllers/evidenceController.js's downloadFile).
+        sha256: String,
         duration: Number,
         uploadedAt: { type: Date, default: Date.now },
         uploadedBy: {
@@ -127,6 +131,10 @@ const evidenceSchema = new mongoose.Schema(
         notes: String,
         ipAddress: String,
         deviceInfo: String,
+        // Structured extra data for integrity-check entries - e.g.
+        // { fileName, expectedHash, actualHash, matched: true/false } -
+        // kept separate from `notes` so it stays machine-readable.
+        metadata: mongoose.Schema.Types.Mixed,
       },
     ],
 

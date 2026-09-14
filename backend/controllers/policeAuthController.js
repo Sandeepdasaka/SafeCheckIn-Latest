@@ -5,6 +5,14 @@ const { logActivity } = require("./activityController");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
+const {
+  OTP_TTL_MS,
+  MAX_OTP_ATTEMPTS,
+  generateOtp,
+  hashOtp,
+  verifyOtpHash,
+  deliverOtp,
+} = require("../utils/otp");
 
 // Generate JWT token with role information
 const generatePoliceToken = (policeId, police) => {
@@ -24,6 +32,14 @@ const generatePoliceToken = (policeId, police) => {
     }
   );
 };
+
+// Short-lived token identifying a password-verified, OTP-pending login -
+// deliberately NOT a full police JWT (it carries no role/permissions), so
+// it can't be used against any authenticated route if intercepted.
+const generateOtpPendingToken = (policeId) =>
+  jwt.sign({ policeId, purpose: "police_login_otp" }, process.env.JWT_SECRET, {
+    expiresIn: "10m",
+  });
 
 // Register new police officer with role
 const registerPolice = async (req, res) => {
@@ -188,23 +204,167 @@ const loginPolice = async (req, res) => {
       });
     }
 
-    // Update login statistics
+    // Password verified - this is NOT a completed login. Issue an OTP and
+    // require it before handing out a real token, so a leaked/guessed
+    // password alone can never authenticate as a police officer.
+    const otp = generateOtp();
+    const otpHash = await hashOtp(otp);
+
     await Police.findByIdAndUpdate(police._id, {
-      lastLoginAt: new Date(),
-      $inc: { loginCount: 1 },
+      otp: {
+        hash: otpHash,
+        expiresAt: new Date(Date.now() + OTP_TTL_MS),
+        attempts: 0,
+      },
     });
 
-    // Log successful login
+    await deliverOtp(police, otp);
+
     await logActivity(
       police._id.toString(),
       "login_attempt",
       "system",
       police._id.toString(),
-      { success: true, role: police.role },
+      { success: false, stage: "password_verified_awaiting_otp" },
       req
     );
 
-    // Generate token
+    const otpToken = generateOtpPendingToken(police._id);
+
+    res.json({
+      success: true,
+      requiresOtp: true,
+      message: "Password verified. Enter the OTP sent to your registered contact.",
+      otpToken,
+      otpExpiresInSeconds: OTP_TTL_MS / 1000,
+      // DEMO ONLY: with no SMS/email provider wired up, echo the OTP back
+      // so the flow is testable without one. This must never happen in
+      // production - see utils/otp.js's deliverOtp for where a real
+      // provider would replace this.
+      ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
+    });
+  } catch (error) {
+    console.error("Police login error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Login failed",
+      message: "An error occurred during login",
+    });
+  }
+};
+
+// Step 2 of login: verify the OTP issued by loginPolice and, only then,
+// issue the real police JWT.
+const verifyPoliceOtp = async (req, res) => {
+  try {
+    const { otpToken, otp } = req.body;
+
+    if (!otpToken || !otp) {
+      return res.status(400).json({
+        success: false,
+        error: "otpToken and otp are required",
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(otpToken, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        error: "OTP session expired or invalid. Please log in again.",
+        code: "OTP_SESSION_INVALID",
+      });
+    }
+
+    if (decoded.purpose !== "police_login_otp") {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid token for this operation.",
+        code: "OTP_SESSION_INVALID",
+      });
+    }
+
+    const police = await Police.findById(decoded.policeId);
+    if (!police || !police.isActive) {
+      return res.status(401).json({
+        success: false,
+        error: "Officer not found or inactive.",
+        code: "INVALID_CREDENTIALS",
+      });
+    }
+
+    if (!police.otp?.hash || !police.otp?.expiresAt) {
+      return res.status(400).json({
+        success: false,
+        error: "No OTP pending for this login. Please log in again.",
+        code: "NO_OTP_PENDING",
+      });
+    }
+
+    if (new Date() > police.otp.expiresAt) {
+      await Police.findByIdAndUpdate(police._id, {
+        otp: { hash: null, expiresAt: null, attempts: 0 },
+      });
+      return res.status(401).json({
+        success: false,
+        error: "OTP expired. Please log in again.",
+        code: "OTP_EXPIRED",
+      });
+    }
+
+    if (police.otp.attempts >= MAX_OTP_ATTEMPTS) {
+      await Police.findByIdAndUpdate(police._id, {
+        otp: { hash: null, expiresAt: null, attempts: 0 },
+      });
+      return res.status(429).json({
+        success: false,
+        error: "Too many incorrect OTP attempts. Please log in again.",
+        code: "OTP_LOCKED",
+      });
+    }
+
+    const isOtpValid = await verifyOtpHash(String(otp).trim(), police.otp.hash);
+
+    if (!isOtpValid) {
+      const attempts = police.otp.attempts + 1;
+      await Police.findByIdAndUpdate(police._id, {
+        "otp.attempts": attempts,
+      });
+
+      await logActivity(
+        police._id.toString(),
+        "login_failed",
+        "system",
+        police._id.toString(),
+        { reason: "invalid_otp", attempts },
+        req
+      );
+
+      return res.status(401).json({
+        success: false,
+        error: "Incorrect OTP.",
+        code: "INVALID_OTP",
+        attemptsRemaining: Math.max(0, MAX_OTP_ATTEMPTS - attempts),
+      });
+    }
+
+    // OTP correct - clear it (single use) and complete the login.
+    await Police.findByIdAndUpdate(police._id, {
+      otp: { hash: null, expiresAt: null, attempts: 0 },
+      lastLoginAt: new Date(),
+      $inc: { loginCount: 1 },
+    });
+
+    await logActivity(
+      police._id.toString(),
+      "login_success",
+      "system",
+      police._id.toString(),
+      { role: police.role },
+      req
+    );
+
     const token = generatePoliceToken(police._id, police);
 
     res.json({
@@ -221,15 +381,15 @@ const loginPolice = async (req, res) => {
         role: police.role,
         isActive: police.isActive,
         lastLoginAt: police.lastLoginAt,
-        loginCount: police.loginCount,
+        loginCount: police.loginCount + 1,
       },
     });
   } catch (error) {
-    console.error("Police login error:", error);
+    console.error("Police OTP verification error:", error);
     res.status(500).json({
       success: false,
-      error: "Login failed",
-      message: "An error occurred during login",
+      error: "OTP verification failed",
+      message: "An error occurred while verifying the OTP",
     });
   }
 };
@@ -881,6 +1041,7 @@ const refreshPoliceToken = async (req, res) => {
 module.exports = {
   registerPolice,
   loginPolice,
+  verifyPoliceOtp,
   getPoliceProfile,
   updatePoliceProfile,
   changePolicePassword,

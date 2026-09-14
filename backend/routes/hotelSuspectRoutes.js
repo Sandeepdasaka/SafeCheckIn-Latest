@@ -3,9 +3,32 @@ const express = require("express");
 const router = express.Router();
 const Suspect = require("../models/Suspect");
 const { auth } = require("../middleware/auth");
+const { maskIdNumber } = require("../utils/mask");
 
 // All routes require hotel authentication
 router.use(auth);
+
+// suspectData is a plain embedded snapshot (not populated), so Mongoose
+// field selection can't touch it - it carries the full unmasked ID number
+// and police-only photo URLs unless we strip them here before responding.
+const sanitizeSuspectForHotel = (suspect) => {
+  if (suspect?.suspectData) {
+    suspect.suspectData = {
+      ...suspect.suspectData,
+      aadhar: suspect.suspectData.aadhar
+        ? maskIdNumber(suspect.suspectData.aadhar)
+        : suspect.suspectData.aadhar,
+      photos: suspect.suspectData.photos
+        ? {
+            guestPhoto: !!suspect.suspectData.photos.guestPhoto,
+            idFront: !!suspect.suspectData.photos.idFront,
+            idBack: !!suspect.suspectData.photos.idBack,
+          }
+        : undefined,
+    };
+  }
+  return suspect;
+};
 
 // ========== GET SUSPECTS FOR CURRENT HOTEL ========== //
 // GET /api/hotel/suspects
@@ -40,7 +63,7 @@ router.get("/", async (req, res) => {
 
     res.json({
       success: true,
-      suspects: suspects,
+      suspects: suspects.map(sanitizeSuspectForHotel),
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / parseInt(limit)),
@@ -89,7 +112,7 @@ router.get("/:suspectId", async (req, res) => {
 
     res.json({
       success: true,
-      suspect: suspect,
+      suspect: sanitizeSuspectForHotel(suspect),
       readOnly: true,
     });
   } catch (error) {

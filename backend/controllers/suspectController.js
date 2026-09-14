@@ -56,13 +56,18 @@ const verifySuspect = async (req, res) => {
     }
 
     const guest = alert.guestId;
+    // Per-guest ID/age data lives in guest.guests[] (one entry per person on
+    // the booking), not on the Guest document itself - guest.aadhar/.age
+    // below always evaluated to nothing before this fix, so the "verified
+    // suspect" profile silently never had an ID number for police to see.
+    const primaryGuest = guest.getPrimaryGuest ? guest.getPrimaryGuest() : null;
     const suspectData = {
       name: guest.name,
       phone: guest.phone,
       email: guest.email || "",
-      aadhar: guest.aadhar || "",
+      aadhar: primaryGuest?.idNumber || "",
       address: guest.address || "",
-      age: guest.age || null,
+      age: primaryGuest?.age || null,
       nationality: guest.nationality || "",
       roomNumber: guest.roomNumber || "",
       // Police-only view links - never exposed to the hotel side. These

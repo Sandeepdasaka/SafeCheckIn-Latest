@@ -6,6 +6,7 @@ const { logActivity } = require("./activityController");
 const { validationResult } = require("express-validator");
 const path = require("path");
 const fs = require("fs").promises;
+const { maskIdNumber } = require("../utils/mask");
 
 // INSTANT check-in with file paths (not GridFS)
 const checkInGuest = async (req, res) => {
@@ -185,7 +186,7 @@ const checkInGuest = async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Guest checked in successfully",
-      data: sanitizeGuestPhotos(guest),
+      data: sanitizeGuestForHotel(guest),
       performance: {
         processingTimeMs: totalTime,
         photosUploaded: Object.keys(req.photoPaths || {}).length,
@@ -207,17 +208,15 @@ const checkInGuest = async (req, res) => {
   }
 };
 
-// ── sanitizeGuestPhotos ──────────────────────────────────────────────────────
-// Guest photos and ID document scans must never reach the receptionist's
-// device - only police may view the actual image bytes (see
-// routes/policeGuestPhotoRoutes.js). Every hotel-facing response that
-// includes a guest document must be passed through this first: it replaces
-// each photo's binary payload with metadata only (whether it exists, when
-// it was captured, its mime type) so the hotel UI can show "captured ✓"
-// without ever downloading, caching, or rendering the image itself.
+// ── sanitizeGuestForHotel ────────────────────────────────────────────────────
+// Guest photos, ID document scans, and full ID/Aadhaar numbers must never
+// reach the receptionist's device - only police may view them unmasked (see
+// routes/policeGuestPhotoRoutes.js for photos, and the police-only suspect
+// endpoints in suspectController.js for full ID numbers). Every hotel-facing
+// response that includes a guest document must be passed through this first.
 const PHOTO_FIELDS = ["guestPhoto", "idFront", "idBack"];
 
-const sanitizeGuestPhotos = (guestDoc) => {
+const sanitizeGuestForHotel = (guestDoc) => {
   if (!guestDoc) return guestDoc;
   const plain =
     typeof guestDoc.toObject === "function" ? guestDoc.toObject() : { ...guestDoc };
@@ -240,10 +239,21 @@ const sanitizeGuestPhotos = (guestDoc) => {
     plain.photos = safePhotos;
   }
 
+  // Mask every guest-in-the-booking's ID number (Aadhaar/passport/etc.) -
+  // the receptionist keyed it in during check-in and can still verify it
+  // against the physical document in front of them, but it must not be
+  // retrievable in full afterwards from the guest list/detail views.
+  if (Array.isArray(plain.guests)) {
+    plain.guests = plain.guests.map((g) => ({
+      ...g,
+      idNumber: maskIdNumber(g.idNumber, g.idType),
+    }));
+  }
+
   return plain;
 };
 
-const sanitizeGuestListForHotel = (guests) => guests.map(sanitizeGuestPhotos);
+const sanitizeGuestListForHotel = (guests) => guests.map(sanitizeGuestForHotel);
 
 // Helper function to clean up uploaded files
 const cleanupUploadedFiles = async (files) => {
@@ -368,7 +378,7 @@ const checkOutGuest = async (req, res) => {
     res.json({
       success: true,
       message: "Guest checked out successfully",
-      data: sanitizeGuestPhotos(guest),
+      data: sanitizeGuestForHotel(guest),
     });
   } catch (error) {
     console.error("Error in checkOutGuest:", error);
@@ -457,7 +467,7 @@ const updateGuest = async (req, res) => {
     res.json({
       success: true,
       message: "Guest updated successfully",
-      data: sanitizeGuestPhotos(guest),
+      data: sanitizeGuestForHotel(guest),
     });
   } catch (error) {
     console.error("Error in updateGuest:", error);
@@ -514,7 +524,7 @@ const getGuestById = async (req, res) => {
 
     res.json({
       success: true,
-      data: sanitizeGuestPhotos(guest),
+      data: sanitizeGuestForHotel(guest),
     });
   } catch (error) {
     console.error("Error in getGuestById:", error);
@@ -707,7 +717,7 @@ const getAllGuestsByRoom = async (req, res) => {
       if (!acc[guest.roomNumber]) {
         acc[guest.roomNumber] = [];
       }
-      acc[guest.roomNumber].push(sanitizeGuestPhotos(guest));
+      acc[guest.roomNumber].push(sanitizeGuestForHotel(guest));
       return acc;
     }, {});
 

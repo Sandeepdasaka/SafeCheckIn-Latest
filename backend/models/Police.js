@@ -97,6 +97,14 @@ const policeSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Login 2FA - a fresh OTP is issued on every password-verified login
+    // attempt and cleared once used or expired. Never store the OTP itself,
+    // only a hash of it (see utils/otp.js).
+    otp: {
+      hash: { type: String, default: null },
+      expiresAt: { type: Date, default: null },
+      attempts: { type: Number, default: 0 },
+    },
     // Add profile fields
     contactNumber: String,
     emergencyContact: {

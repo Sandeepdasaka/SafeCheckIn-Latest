@@ -4,6 +4,7 @@ const router = express.Router();
 const {
   registerPolice,
   loginPolice,
+  verifyPoliceOtp,
   getPoliceProfile,
   updatePoliceProfile,
   changePolicePassword,
@@ -19,13 +20,17 @@ const {
   requireAdminPolice,
   requireAnyPolice,
 } = require("../middleware/policeAuth");
+const { authRateLimit } = require("../middleware/security");
 // ⭐ NEW
 const {
   getJurisdictionMapData,
 } = require("../controllers/jurisdictionController");
 
-// Public routes (no authentication required)
-router.post("/login", loginPolice);
+// Public routes (no authentication required). Rate-limited: /login guards
+// password guessing, /login/verify-otp guards brute-forcing the 6-digit OTP
+// on top of the per-officer attempt cap in verifyPoliceOtp itself.
+router.post("/login", authRateLimit, loginPolice);
+router.post("/login/verify-otp", authRateLimit, verifyPoliceOtp);
 router.post("/register", registerPolice);
 
 // Protected routes (authentication required)

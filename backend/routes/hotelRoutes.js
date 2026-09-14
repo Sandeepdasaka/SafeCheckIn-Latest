@@ -19,9 +19,10 @@ const {
 const { getHotelById } = require("../controllers/hotelAuthController");
 
 const { auth, rateLimiter } = require("../middleware/auth");
+const { authRateLimit } = require("../middleware/security");
 
 // Public routes (no authentication required)
-router.post("/login", loginHotel);
+router.post("/login", authRateLimit, loginHotel);
 router.post(
   "/register",
   (req, res, next) => {

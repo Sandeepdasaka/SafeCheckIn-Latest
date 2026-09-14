@@ -3,6 +3,9 @@ const Evidence = require("../models/Evidence");
 const Guest = require("../models/Guest");
 const Alert = require("../models/Alert");
 const multer = require("multer");
+const crypto = require("crypto");
+
+const sha256Hex = (buffer) => crypto.createHash("sha256").update(buffer).digest("hex");
 
 // Check if activityController exists
 let logActivity;
@@ -82,6 +85,11 @@ const uploadEvidence = async (req, res) => {
     const hotelId = req.hotelId || req.body.hotelId;
     const userId = req.user?._id || req.user?.id || req.hotelId;
 
+    // Hash every file's raw bytes now, before anything else touches them -
+    // this is the "custody starts here" fingerprint everything downstream
+    // (downloadFile) re-verifies against.
+    const fileHashes = req.files.map((file) => sha256Hex(file.buffer));
+
     const evidence = new Evidence({
       suspectId,
       alertId,
@@ -94,11 +102,12 @@ const uploadEvidence = async (req, res) => {
       evidenceType: req.body.evidenceType || "Image",
       tags: tags ? tags.split(",") : [],
       incidentDate: incidentDate ? new Date(incidentDate) : new Date(),
-      files: req.files.map((file) => ({
+      files: req.files.map((file, i) => ({
         fileName: file.originalname,
         fileData: file.buffer.toString("base64"),
         fileSize: file.size,
         mimeType: file.mimetype,
+        sha256: fileHashes[i],
         uploadedBy: {
           userId: userId,
           name: req.user?.name || "Hotel Staff",
@@ -118,6 +127,12 @@ const uploadEvidence = async (req, res) => {
           timestamp: new Date(),
           notes: "Evidence uploaded to system",
           ipAddress: req.ip,
+          metadata: {
+            files: req.files.map((file, i) => ({
+              fileName: file.originalname,
+              sha256: fileHashes[i],
+            })),
+          },
         },
         {
           action: "Auto-Shared with Police",
@@ -569,6 +584,51 @@ const downloadFile = async (req, res) => {
     );
 
     const buffer = Buffer.from(file.fileData, "base64");
+
+    // Re-verify the chain of custody on every access: recompute the hash of
+    // what's actually being served and compare it to what was recorded at
+    // upload time. Older records uploaded before this check existed have no
+    // baseline (file.sha256 is unset) and are skipped rather than flagged.
+    let integrityVerified = null;
+    if (file.sha256) {
+      const actualHash = sha256Hex(buffer);
+      integrityVerified = actualHash === file.sha256;
+
+      await Evidence.findByIdAndUpdate(evidenceId, {
+        $push: {
+          chainOfCustody: {
+            action: integrityVerified ? "Integrity Verified" : "INTEGRITY MISMATCH",
+            performedBy: {
+              userId,
+              name: req.user?.name || "Unknown",
+              role: req.user?.role || req.user?.policeRole || "Unknown",
+              badgeNumber: req.user?.badgeNumber || "",
+            },
+            timestamp: new Date(),
+            notes: integrityVerified
+              ? "File hash matches the upload-time record."
+              : "File hash does NOT match the upload-time record - possible tampering or corruption.",
+            ipAddress: req.ip,
+            metadata: {
+              fileName: file.fileName,
+              expectedHash: file.sha256,
+              actualHash,
+              matched: integrityVerified,
+            },
+          },
+        },
+      });
+
+      if (!integrityVerified) {
+        console.error(
+          `🚨 EVIDENCE INTEGRITY MISMATCH: evidence=${evidenceId} file=${fileIndex} expected=${file.sha256} actual=${actualHash}`,
+        );
+      }
+
+      res.setHeader("X-File-SHA256", actualHash);
+      res.setHeader("X-File-Integrity", integrityVerified ? "verified" : "MISMATCH");
+    }
+
     res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
     res.setHeader(
       "Content-Disposition",
