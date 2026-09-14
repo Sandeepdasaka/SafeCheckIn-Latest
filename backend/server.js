@@ -1,0 +1,387 @@
+// server.js - UPDATED WITH EVIDENCE ROUTES
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const dotenv = require("dotenv");
+const path = require("path");
+const fs = require("fs");
+
+// Load environment variables
+dotenv.config();
+
+// FAIL CLOSED: refuse to boot on a weak/missing JWT secret instead of
+// silently falling back to a well-known string (that fallback used to let
+// anyone forge admin police tokens - see middleware/policeAuth.js history).
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error(
+    "❌ FATAL: JWT_SECRET is missing or too short (need >= 32 chars). " +
+      "Set a strong random value in your .env before starting the server.",
+  );
+  process.exit(1);
+}
+
+// Check for optional middleware
+const securityMiddleware = fs.existsSync("./middleware/security.js")
+  ? require("./middleware/security")
+  : {
+      securityHeaders: (req, res, next) => next(),
+      sanitizeInput: (req, res, next) => next(),
+      apiRateLimit: (req, res, next) => next(),
+    };
+
+const { securityHeaders, sanitizeInput, apiRateLimit } = securityMiddleware;
+
+// Route imports
+const hotelRoutes = require("./routes/hotelRoutes");
+const guestRoutes = require("./routes/guestRoutes");
+const alertRoutes = require("./routes/alertRoutes");
+const reportRoutes = require("./routes/reportRoutes");
+const policeRoutes = require("./routes/policeRoutes");
+const policeAlertRoutes = require("./routes/policeAlertRoutes");
+const activityRoutes = require("./routes/activityRoutes");
+const suspectRoutes = require("./routes/suspectRoutes");
+const hotelSuspectRoutes = require("./routes/hotelSuspectRoutes");
+const policeGuestPhotoRoutes = require("./routes/policeGuestPhotoRoutes");
+
+// ⭐ ADD THIS LINE HERE (after hotelSuspectRoutes, before evidence check)
+const { createProxyMiddleware } = require("http-proxy-middleware");
+// ⭐ NEW: Evidence routes
+const evidenceRoutes = fs.existsSync("./routes/evidenceRoutes.js")
+  ? require("./routes/evidenceRoutes")
+  : null;
+
+// Optional: Auth routes
+const authRoutes = fs.existsSync("./routes/authRoutes.js")
+  ? require("./routes/authRoutes")
+  : null;
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+/* ────────────────────────────  SERVER SETUP  ───────────────────────────── */
+const server = require("http").createServer(app);
+
+/* ─────────────────────────────  CORS & BASIC MIDDLEWARE  ───────────────────────────── */
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : [];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        console.log("❌ Blocked by CORS:", origin);
+        return callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+
+app.use(
+  "/api/agent",
+  createProxyMiddleware({
+    target: "http://localhost:8000",
+    changeOrigin: true,
+    pathRewrite: { "^/api/agent": "" },
+    on: {
+      error: (err, req, res) => {
+        console.error("[SafeAI Proxy] Error:", err.message);
+        if (!res.headersSent) {
+          res.status(503).json({
+            error: "AI service unavailable",
+            message: "Ensure the Python AI service is running on port 8000",
+          });
+        }
+      },
+    },
+  }),
+);
+
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// ========== INCREASED TIMEOUTS FOR FILE UPLOADS ========== //
+
+app.use("/api/guests/checkin", (req, res, next) => {
+  req.setTimeout(300000); // 5 minutes
+  res.setTimeout(300000);
+  express.json({ limit: "50mb" })(req, res, () => {
+    express.urlencoded({ extended: true, limit: "50mb" })(req, res, next);
+  });
+});
+
+// ⭐ NEW: Evidence upload timeout
+if (evidenceRoutes) {
+  app.use("/api/evidence/upload", (req, res, next) => {
+    req.setTimeout(300000);
+    res.setTimeout(300000);
+    express.json({ limit: "50mb" })(req, res, () => {
+      express.urlencoded({ extended: true, limit: "50mb" })(req, res, next);
+    });
+  });
+}
+
+/* ═══ Uploads directory: created for multer/legacy fallback use only. ═══
+ * Guest photos and ID documents are stored as encrypted base64 inside
+ * MongoDB (see middleware/upload.js) and are NEVER served from a static
+ * file route. There is intentionally no `express.static("/uploads", ...)`
+ * mount here anymore: that used to serve every guest ID photo and every
+ * piece of police evidence to anyone with (or guessing) the URL, with no
+ * authentication at all. Photos are now only reachable through
+ * routes/policeGuestPhotoRoutes.js, which requires a police JWT. The three
+ * old /debug/* endpoints that listed this directory's contents (also
+ * unauthenticated) have been removed for the same reason. */
+const uploadsPath = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+}
+const evidencePath = path.join(uploadsPath, "evidence");
+if (!fs.existsSync(evidencePath)) {
+  fs.mkdirSync(evidencePath, { recursive: true });
+}
+
+/* ─────────────────────────────  SECURITY MIDDLEWARE  ───────────────────────────── */
+app.use(securityHeaders);
+app.use(sanitizeInput);
+
+// Simple request logging
+app.use((req, res, next) => {
+  if (
+    req.path.includes("/checkin") ||
+    req.path.includes("/photo") ||
+    req.path.includes("/evidence")
+  ) {
+    console.log(`📁 [${new Date().toISOString()}] ${req.method} ${req.path}`);
+  }
+  next();
+});
+
+// Default middleware for non-file routes
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Apply rate limiting EXCEPT for file uploads
+app.use("/api", (req, res, next) => {
+  if (
+    req.path.includes("/checkin") ||
+    req.path.includes("/photo") ||
+    req.path.includes("/evidence/upload")
+  ) {
+    next();
+  } else {
+    apiRateLimit(req, res, next);
+  }
+});
+
+/* ───────────────────────────  MONGODB CONNECTION  ────────────────────────── */
+const MONGODB_URI =
+  process.env.MONGODB_URI || "mongodb://localhost:27017/safecheckin";
+
+mongoose
+  .connect(MONGODB_URI, {
+    maxPoolSize: 50,
+    minPoolSize: 5,
+    maxIdleTimeMS: 30000,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 300000,
+    connectTimeoutMS: 10000,
+    heartbeatFrequencyMS: 10000,
+  })
+  .then(() => {
+    console.log("✅ Connected to MongoDB");
+  })
+  .catch((error) => {
+    console.error("❌ MongoDB connection error:", error);
+    process.exit(1);
+  });
+
+mongoose.set("bufferCommands", false);
+
+/* ──────────────────────────────  ROUTES  ─────────────────────────────── */
+
+const { startAutoCheckoutJob } = require("./jobs/autoCheckout");
+startAutoCheckoutJob();
+// Health check route
+app.get("/", (_req, res) => {
+  res.json({
+    message: "SafeCheckIn Multi-Hotel API is running!",
+    version: "2.3.0",
+    timestamp: new Date().toISOString(),
+    status: "healthy",
+    features: {
+      evidenceManagement: evidenceRoutes ? "enabled" : "disabled",
+      authentication: authRoutes ? "enabled" : "disabled",
+    },
+  });
+});
+
+// API Status
+app.get("/api/status", (req, res) => {
+  res.json({
+    success: true,
+    api: "SafeCheckIn API",
+    version: "2.3.0",
+    status: "🟢 Online",
+    timestamp: new Date(),
+    modules: {
+      evidence: evidenceRoutes ? "✅" : "❌",
+      auth: authRoutes ? "✅" : "❌",
+    },
+  });
+});
+
+// API Routes
+if (authRoutes) app.use("/api/auth", authRoutes);
+app.use("/api/hotels", hotelRoutes);
+app.use("/api/guests", guestRoutes);
+app.use("/api/alerts", alertRoutes);
+
+// ⭐ NEW: Evidence routes
+if (evidenceRoutes) {
+  app.use("/api/evidence", evidenceRoutes);
+  console.log("✅ Evidence routes registered at /api/evidence");
+}
+
+app.use("/api/reports", reportRoutes);
+app.use("/api/police", policeRoutes);
+app.use("/api/police/alerts", policeAlertRoutes);
+app.use("/api/activities", activityRoutes);
+app.use("/api/suspects", suspectRoutes);
+app.use("/api/hotel/suspects", hotelSuspectRoutes);
+// Police-only: the ONLY place guest/ID photos can be fetched from.
+app.use("/api/police/guests", policeGuestPhotoRoutes);
+
+/* ───────────────────────  ERROR HANDLERS  ───────────────────────────── */
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: "Route not found",
+    path: req.originalUrl,
+    method: req.method,
+  });
+});
+
+// Global error handler
+app.use((error, req, res, next) => {
+  console.error("❌ Server Error:", {
+    path: req.originalUrl,
+    method: req.method,
+    error: error.message,
+    code: error.code,
+  });
+
+  res.setHeader("Content-Type", "application/json");
+
+  // Duplicate key error
+  if (error.code === 11000) {
+    const field = Object.keys(error.keyValue || {})[0] || "field";
+    return res.status(400).json({
+      success: false,
+      error: `${field} already exists`,
+      code: "DUPLICATE_KEY",
+    });
+  }
+
+  // Validation error
+  if (error.name === "ValidationError") {
+    const messages = Object.values(error.errors || {}).map(
+      (err) => err.message,
+    );
+    return res.status(400).json({
+      success: false,
+      error: messages.join(", "),
+      code: "VALIDATION_ERROR",
+    });
+  }
+
+  // File upload errors
+  if (error.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({
+      success: false,
+      error: "File too large. Maximum size is 50MB.",
+      code: "FILE_TOO_LARGE",
+    });
+  }
+
+  // Multer file type error
+  if (error.message && error.message.includes("Invalid file type")) {
+    return res.status(400).json({
+      success: false,
+      error: error.message,
+      code: "INVALID_FILE_TYPE",
+    });
+  }
+
+  // Default server error
+  res.status(500).json({
+    success: false,
+    error: "Internal server error",
+    message:
+      process.env.NODE_ENV === "development"
+        ? error.message
+        : "Something went wrong",
+    code: "INTERNAL_ERROR",
+  });
+});
+
+/* ───────────────────────────────  LISTEN  ─────────────────────────────── */
+server.listen(PORT, () => {
+  console.log(`\n${"=".repeat(70)}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`${"=".repeat(70)}`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`📸 Static file serving: /uploads`);
+  console.log(`📂 Upload directory: ${uploadsPath}`);
+  console.log(`📁 Evidence directory: ${evidencePath}`);
+  console.log(
+    `🔗 MongoDB: ${MONGODB_URI.includes("localhost") ? "Local" : "Remote"}`,
+  );
+
+  if (evidenceRoutes) {
+    console.log(`✅ Evidence management: ENABLED`);
+  } else {
+    console.log(`⚠️  Evidence management: DISABLED (create evidenceRoutes.js)`);
+  }
+
+  console.log(`\n🔍 Debug endpoints:`);
+  console.log(`   - http://localhost:${PORT}/debug/file-structure`);
+  console.log(`   - http://localhost:${PORT}/debug/uploads`);
+  console.log(`   - http://localhost:${PORT}/debug/evidence`);
+  console.log(`${"=".repeat(70)}\n`);
+});
+
+// Set server timeouts
+server.timeout = 300000; // 5 minutes
+server.requestTimeout = 300000;
+server.headersTimeout = 310000;
+server.keepAliveTimeout = 65000;
+
+/* ───────────────────────  GRACEFUL SHUTDOWN  ─────────────────────────── */
+const gracefulShutdown = (signal) => {
+  console.log(`\n👋 ${signal} received, shutting down...`);
+  server.close(() => {
+    mongoose.connection.close(() => {
+      console.log("✅ Server shutdown complete");
+      process.exit(0);
+    });
+  });
+
+  setTimeout(() => {
+    console.error("❌ Force shutdown");
+    process.exit(1);
+  }, 30000);
+};
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+module.exports = app;
