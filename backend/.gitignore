@@ -1,5 +1,6 @@
 .env
 node_modules
+coverage/
 
 # Guest ID photos and evidence files are runtime data, not source - and in
 # this app they're real people's identity documents. Never commit them.
